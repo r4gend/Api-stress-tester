@@ -1,0 +1,217 @@
+import React, { useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import {
+  Zap, LayoutDashboard, Plus, List, BookOpen,
+  Activity, Loader2, LogOut, User, HelpCircle
+} from 'lucide-react';
+import { statusColor, statusBg } from '../utils/helpers';
+import { useAuth } from '../context/AuthContext';
+
+// --- Layout ---
+export function Layout({ children }) {
+  const location = useLocation();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const navItems = [
+    { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+    { to: '/tests', icon: List, label: 'Tests' },
+    { to: '/tests/new', icon: Plus, label: 'New Test' },
+    { to: '/help', icon: BookOpen, label: 'Guide' },
+  ];
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
+
+  return (
+    <div className="min-h-screen flex">
+      {/* Sidebar */}
+      <aside className="w-64 border-r border-surface-800/60 bg-surface-950/80 flex flex-col fixed h-full z-20">
+        <div className="p-6 border-b border-surface-800/60">
+          <Link to="/" className="flex items-center gap-3 group">
+            <div className="w-9 h-9 rounded-lg bg-accent/10 border border-accent/30 flex items-center justify-center
+                          group-hover:bg-accent/20 transition-colors">
+              <Zap className="w-5 h-5 text-accent" />
+            </div>
+            <div>
+              <h1 className="font-display font-bold text-lg text-surface-100 leading-none">
+                API Strester
+              </h1>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-surface-500 mt-0.5">
+                API Load Tester
+              </p>
+            </div>
+          </Link>
+        </div>
+
+        <nav className="flex-1 p-4 space-y-1">
+          {navItems.map(({ to, icon: Icon, label }) => {
+            const active = location.pathname === to ||
+              (to === '/tests' && location.pathname.startsWith('/tests') && location.pathname !== '/tests/new');
+            return (
+              <Link
+                key={to}
+                to={to}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200
+                  ${active
+                    ? 'bg-accent/10 text-accent border border-accent/20'
+                    : 'text-surface-400 hover:text-surface-200 hover:bg-surface-800/60 border border-transparent'
+                  }`}
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="p-4 border-t border-surface-800/60 space-y-3">
+          {user && (
+            <div className="flex items-center gap-2 px-1">
+              <div className="w-7 h-7 rounded-full bg-accent/20 border border-accent/30 flex items-center justify-center flex-shrink-0">
+                <User className="w-3.5 h-3.5 text-accent" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-surface-200 truncate">{user.username}</p>
+                <p className="text-xs text-surface-500 truncate">{user.email}</p>
+              </div>
+            </div>
+          )}
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-surface-400
+                       hover:text-danger hover:bg-danger/10 border border-transparent
+                       hover:border-danger/20 transition-all duration-200"
+          >
+            <LogOut className="w-4 h-4" />
+            Sign out
+          </button>
+          <div className="flex items-center gap-2 text-xs text-surface-600 px-1">
+            <Activity className="w-3 h-3" />
+            <span>v1.0.0</span>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <main className="flex-1 ml-64 min-h-screen">
+        <div className="max-w-6xl mx-auto p-8">
+          {children}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+// --- Status Badge ---
+export function StatusBadge({ status }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold uppercase tracking-wide
+      border ${statusBg(status)} ${statusColor(status)}`}>
+      {status === 'running' && (
+        <span className="w-1.5 h-1.5 rounded-full bg-accent pulse-dot" />
+      )}
+      {status}
+    </span>
+  );
+}
+
+// --- Stat Card ---
+export function StatCard({ label, value, sub, accent = false, hint, className = '' }) {
+  return (
+    <div className={`card p-5 ${className}`}>
+      <p className="stat-label flex items-center gap-1.5">
+        {label}
+        {hint && <HintIcon text={hint} side="top" />}
+      </p>
+      <p className={`stat-value mt-1 ${accent ? 'text-accent' : 'text-surface-100'}`}>
+        {value}
+      </p>
+      {sub && <p className="text-xs text-surface-500 mt-1">{sub}</p>}
+    </div>
+  );
+}
+
+// --- Spinner ---
+export function Spinner({ size = 'md', className = '' }) {
+  const sizeClasses = { sm: 'w-4 h-4', md: 'w-6 h-6', lg: 'w-8 h-8' };
+  return (
+    <Loader2 className={`animate-spin text-accent ${sizeClasses[size]} ${className}`} />
+  );
+}
+
+// --- Page Loading ---
+export function PageLoading() {
+  return (
+    <div className="flex items-center justify-center min-h-[400px]">
+      <div className="text-center">
+        <Spinner size="lg" />
+        <p className="mt-4 text-sm text-surface-500">Loading…</p>
+      </div>
+    </div>
+  );
+}
+
+// --- Tooltip ---
+export function Tooltip({ children, content, side = 'top' }) {
+  const [open, setOpen] = useState(false);
+
+  const sideClasses = {
+    top: 'bottom-full left-1/2 -translate-x-1/2 mb-2',
+    bottom: 'top-full left-1/2 -translate-x-1/2 mt-2',
+    right: 'left-full top-1/2 -translate-y-1/2 ml-2',
+    left: 'right-full top-1/2 -translate-y-1/2 mr-2',
+  };
+
+  return (
+    <span
+      className="relative inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+    >
+      {children}
+      {open && content && (
+        <span
+          role="tooltip"
+          className={`absolute z-50 ${sideClasses[side]} pointer-events-none whitespace-pre-line
+                      max-w-xs px-3 py-2 rounded-lg text-xs leading-relaxed
+                      bg-surface-900 border border-surface-700 text-surface-200 shadow-xl`}
+        >
+          {content}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// --- HintIcon (label-attached help indicator) ---
+export function HintIcon({ text, side = 'top' }) {
+  return (
+    <Tooltip content={text} side={side}>
+      <HelpCircle className="w-3.5 h-3.5 text-surface-500 hover:text-accent transition-colors cursor-help" />
+    </Tooltip>
+  );
+}
+
+// --- Empty State ---
+export function EmptyState({ icon: Icon, title, description, action }) {
+  return (
+    <div className="card p-12 text-center">
+      {Icon && (
+        <div className="w-12 h-12 rounded-xl bg-surface-800/60 border border-surface-700/60
+                      flex items-center justify-center mx-auto mb-4">
+          <Icon className="w-6 h-6 text-surface-500" />
+        </div>
+      )}
+      <h3 className="font-display font-semibold text-surface-200">{title}</h3>
+      {description && (
+        <p className="text-sm text-surface-500 mt-2 max-w-sm mx-auto">{description}</p>
+      )}
+      {action && <div className="mt-6">{action}</div>}
+    </div>
+  );
+}
