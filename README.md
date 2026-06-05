@@ -1,194 +1,323 @@
-# Api Stress Tester — API Stress Testing Web Application
+# Api Stress Tester — Веб-приложение для нагрузочного тестирования API
 
-A full-stack web application for HTTP API stress/load testing with real-time analytics, built as a bachelor's thesis project.
+Полностековое веб-приложение для нагрузочного и стресс-тестирования HTTP API с
+аналитикой в реальном времени, пользовательскими аккаунтами и развёртыванием
+одной командой через Docker. Разработано в рамках дипломной работы бакалавра.
 
-## Tech Stack
+## Технологический стек
 
-| Layer     | Technology                                    |
-|-----------|-----------------------------------------------|
-| IDE       | PyCharm Professional                          |
-| Backend   | Python 3.11+, FastAPI, SQLAlchemy 2.0 (async) |
-| Database  | PostgreSQL 15+                                |
-| Frontend  | React 18, Vite, Tailwind CSS, Recharts        |
-| HTTP Engine | aiohttp + asyncio (concurrent virtual users) |
-| Migrations | Alembic                                      |
+| Слой         | Технология                                                   |
+|--------------|--------------------------------------------------------------|
+| IDE          | PyCharm Professional                                         |
+| Backend      | Python 3.11+, FastAPI, SQLAlchemy 2.0 (async)                |
+| База данных  | PostgreSQL 15+                                               |
+| Кэш/Реалтайм | Redis 7 (отмена тестов + live-обновление графиков)           |
+| Авторизация  | JWT (access-токен в памяти + HttpOnly refresh-кука)          |
+| Frontend     | React 18, Vite, Tailwind CSS, Recharts, React Router         |
+| HTTP-движок  | aiohttp + asyncio (конкурентные виртуальные пользователи)    |
+| Миграции     | Alembic                                                      |
+| Деплой       | Docker Compose (postgres · redis · backend · nginx)          |
 
-## Architecture
+## Архитектура
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    React Frontend                        │
-│  Dashboard │ Test List │ Create Test │ Test Detail+Charts │
-└────────────────────────┬────────────────────────────────┘
-                         │ REST API (JSON)
-┌────────────────────────▼────────────────────────────────┐
-│                   FastAPI Backend                         │
-│  Routes (CRUD) │ Stress Engine │ Aggregation (NumPy)     │
-└────────────────────────┬────────────────────────────────┘
-                         │ SQLAlchemy (asyncpg)
-┌────────────────────────▼────────────────────────────────┐
-│                    PostgreSQL                             │
-│         stress_tests │ test_results                       │
-└─────────────────────────────────────────────────────────┘
+                        ┌───────────────────────────────┐
+                        │   nginx (образ frontend)      │
+                        │  раздаёт SPA + проксирует /api│
+                        └─────────────┬─────────────────┘
+                                      │
+┌─────────────────────────────────────▼──────────────────────────────────────────────┐
+│                          React Frontend                                            │
+│  Вход/Регистрация │ Дашборд │ Список тестов │ Создание │ Детали+Графики │ Помощь │ │
+│           AuthContext (тихое обновление токена) · Axios                            │
+└─────────────────────────────────────┬──────────────────────────────────────────────┘
+                                      │ REST API (JSON, Bearer access-token)
+┌─────────────────────────────────────▼──────────────────────────────────────┐
+│                          FastAPI Backend                                   │
+│  Auth (register/login/refresh) │ CRUD тестов │ Движок нагрузки (asyncio)│  │ 
+│          JWT-зависимости │ NumPy-агрегация │ BackgroundTasks               │
+└──────────────┬───────────────────────────────────────┬─────────────────────┘
+               │ SQLAlchemy (asyncpg)                  │ отмена / прогресс
+┌──────────────▼──────────────┐          ┌─────────────▼──────────────┐
+│         PostgreSQL          │          │           Redis            │
+│  users │ stress_tests │     │          │  test:cancel:* / progress  │
+│        test_results         │          │                            │
+└─────────────────────────────┘          └────────────────────────────┘
 ```
 
-## Features
+## Функциональность
 
-- **Test Configuration**: HTTP method, URL, headers, body, content type
-- **Load Parameters**: total requests, concurrent virtual users, ramp-up time, think time, timeout
-- **Async Execution Engine**: aiohttp-based concurrent HTTP client with virtual user simulation
-- **Real-Time Monitoring**: auto-polling UI updates while tests are running
-- **Statistical Analysis**: min/max/avg/median, p95, p99, requests/sec, error rate
-- **Visualizations**: response time timeline, throughput chart, status code distribution, latency scatter plot
-- **Full CRUD**: create, edit, delete, re-run tests
-- **Test Cancellation**: stop running tests gracefully
+- **Аккаунты пользователей** — регистрация, вход, каждый тест принадлежит
+  создавшему его пользователю; API возвращает только собственные тесты.
+- **JWT-авторизация** — короткоживущий access-токен в памяти JS (не в
+  `localStorage`) плюс долгоживущая HttpOnly refresh-кука. Фронтенд
+  восстанавливает сессию при загрузке страницы и незаметно обновляет токен.
+- **Настройка теста** — HTTP-метод, URL, заголовки, тело запроса, тип контента.
+- **Плейсхолдеры в URL и теле** — `{request_number}`, `{user_number}`,
+  `{random}`, `{timestamp}` подставляются в каждом запросе, чтобы виртуальные
+  пользователи обращались к уникальным ресурсам.
+- **Параметры нагрузки** — общее число запросов, кол-во виртуальных
+  пользователей, время разогрева (ramp-up), пауза между запросами, таймаут.
+- **Асинхронный движок** — конкурентный HTTP-клиент на aiohttp с симуляцией
+  виртуальных пользователей, выполняется как фоновая задача FastAPI.
+- **Графики в реальном времени** — во время прогона страница автоматически
+  обновляется каждые ~2 с. Redis обеспечивает live-обновление счётчиков
+  прогресса и актуальных данных для всех графиков (время ответа, пропускная
+  способность, коды статусов, разброс задержек).
+- **Отмена теста** — остановить прогон в любой момент через флаг отмены в
+  Redis, который движок проверяет между запросами.
+- **Статистика** — min/max/avg/median, p95, p99, requests/sec, error rate.
+- **Визуализации** — 4 типа графиков: таймлайн времён ответа, пропускная
+  способность, распределение кодов статусов, скаттер-плот задержек.
+- **Полный CRUD** — создать, изменить, удалить, перезапустить тест.
+- **Встроенная справка** — страница `/help` с описанием HTTP-методов,
+  плейсхолдеров, параметров нагрузки, расшифровки метрик и примеров настроек.
 
-## Prerequisites
+## Требования
+
+**Docker (рекомендуется):**
+
+- Docker & Docker Compose
+
+**Ручная установка / IDE:**
 
 - Python 3.11+
-- Node.js 18+ & npm
+- Node.js 18+ и npm
 - PostgreSQL 15+
-- PyCharm Professional (recommended IDE)
+- Redis 7+
+- PyCharm Professional (рекомендуемая IDE)
 
-## Setup Instructions
+## Быстрый старт через Docker
 
-### 1. Clone & Navigate
+Весь стек — PostgreSQL, Redis, FastAPI-бэкенд и nginx, который раздаёт
+собранный фронтенд и проксирует `/api` — поднимается одной командой:
+
+```bash
+docker compose up --build
+```
+
+Откройте `http://localhost`. Бэкенд слушает порт `8000`, PostgreSQL — `5432`,
+Redis — `6379`. Учётные данные переопределяются переменными `POSTGRES_USER`,
+`POSTGRES_PASSWORD`, `POSTGRES_DB`.
+
+> Бэкенд создаёт таблицы автоматически при запуске — отдельно запускать
+> миграции при первом старте не нужно.
+
+## Ручная установка
+
+### 1. Перейдите в папку проекта
 
 ```bash
 cd api-stress-tester
 ```
 
-### 2. Database Setup
+### 2. База данных и Redis
 
 ```bash
-# Create the PostgreSQL database
+# Создайте базу данных PostgreSQL
 psql -U postgres -c "CREATE DATABASE stress_tester;"
+
+# Убедитесь, что Redis запущен (по умолчанию: redis://localhost:6379/0)
+redis-server
 ```
 
-### 3. Backend Setup
+### 3. Настройка бэкенда
 
 ```bash
 cd backend
 
-# Create virtual environment (PyCharm can also do this automatically)
+# Создайте виртуальное окружение (PyCharm может сделать это автоматически)
 python -m venv venv
 source venv/bin/activate   # Linux/Mac
 # venv\Scripts\activate    # Windows
 
-# Install dependencies
+# Установите зависимости
 pip install -r requirements.txt
 
-# Copy and configure environment
+# Скопируйте и настройте переменные окружения
 cp .env.example .env
-# Edit .env with your database credentials if needed
+# Отредактируйте .env: укажите DATABASE_URL, REDIS_URL и надёжный JWT_SECRET_KEY
 
-# Initialize database tables
+# Создайте таблицы в базе данных
 python -c "import asyncio; from app.database import init_db; asyncio.run(init_db())"
 
-# Run the backend server
+# Запустите сервер
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-The API will be available at `http://localhost:8000`.
-Swagger docs at `http://localhost:8000/docs`.
+API доступно по адресу `http://localhost:8000`.
+Документация Swagger — `http://localhost:8000/docs`.
 
-### 4. Frontend Setup
+### 4. Настройка фронтенда
 
 ```bash
 cd frontend
 
-# Install dependencies
+# Установите зависимости
 npm install
 
-# Start development server
+# Запустите dev-сервер
 npm run dev
 ```
 
-The frontend will be available at `http://localhost:5173`.
+Фронтенд доступен по адресу `http://localhost:5173`.
 
-### 5. PyCharm Configuration
+### 5. Первый вход
 
-1. Open the `api-stress-tester` folder as a project in PyCharm Professional
-2. Configure Python interpreter: `backend/venv/python`
-3. Set up a **Run Configuration** for the backend:
+Откройте приложение, перейдите на страницу **Регистрация** и создайте аккаунт.
+После регистрации вы автоматически войдёте в систему и сможете создавать тесты.
+
+### 6. Настройка в PyCharm
+
+1. Откройте папку `api-stress-tester` как проект в PyCharm Professional.
+2. Укажите интерпретатор Python: `backend/venv/python`.
+3. Создайте **Run Configuration** для бэкенда:
    - Script: `uvicorn`
    - Parameters: `app.main:app --reload`
    - Working directory: `backend/`
-4. Set up a **npm Run Configuration** for the frontend:
+4. Создайте **npm Run Configuration** для фронтенда:
    - Command: `run dev`
    - Package.json: `frontend/package.json`
-5. Enable the **Database** tool window and connect to your PostgreSQL instance
+5. Подключите PostgreSQL через вкладку **Database**.
 
-## API Endpoints
+## Конфигурация
 
-| Method | Endpoint                     | Description                |
-|--------|------------------------------|----------------------------|
-| GET    | `/api/health`                | Health check               |
-| GET    | `/api/tests/summary`         | Dashboard summary stats    |
-| GET    | `/api/tests/`                | List all tests             |
-| POST   | `/api/tests/`                | Create a new test          |
-| GET    | `/api/tests/{id}`            | Get test details           |
-| PUT    | `/api/tests/{id}`            | Update a test              |
-| DELETE | `/api/tests/{id}`            | Delete a test              |
-| POST   | `/api/tests/{id}/run`        | Execute the stress test    |
-| POST   | `/api/tests/{id}/cancel`     | Cancel a running test      |
-| GET    | `/api/tests/{id}/results`    | Get per-request results    |
-| GET    | `/api/tests/{id}/timeline`   | Get timeline data for charts |
+Настройки бэкенда читаются из переменных окружения (см. `backend/.env.example`):
 
-## Database Schema
+| Переменная                        | Назначение                                              |
+|-----------------------------------|---------------------------------------------------------|
+| `DATABASE_URL`                    | Async DSN для Postgres (`postgresql+asyncpg://...`)     |
+| `DATABASE_URL_SYNC`               | Sync DSN для Alembic                                    |
+| `REDIS_URL`                       | Подключение Redis (флаги отмены и прогресс)             |
+| `JWT_SECRET_KEY`                  | Ключ подписи JWT — **обязательно смените в продакшене** |
+| `ACCESS_TOKEN_EXPIRE_MINUTES`     | Срок жизни access-токена (короткоживущий)               |
+| `REFRESH_TOKEN_EXPIRE_DAYS`       | Срок жизни refresh-куки (по умолчанию 7 дней)           |
+| `CORS_ORIGINS`                    | Разрешённые origins через запятую                       |
+| `APP_HOST` / `APP_PORT` / `DEBUG` | Хост, порт сервера, режим отладки                       |
+
+## Эндпоинты API
+
+Все эндпоинты `/api/tests/*` требуют заголовка `Authorization: Bearer <access_token>`
+и работают только с тестами авторизованного пользователя.
+
+### Авторизация
+
+| Метод | Эндпоинт             | Описание                                                        |
+|-------|----------------------|-----------------------------------------------------------------|
+| POST  | `/api/auth/register` | Создать аккаунт, вернуть access-токен + установить refresh-куку |
+| POST  | `/api/auth/login`    | Войти, вернуть access-токен + установить refresh-куку           |
+| POST  | `/api/auth/refresh`  | Обменять refresh-куку на новый токен (кука ротируется)          |
+| POST  | `/api/auth/logout`   | Очистить refresh-куку                                           |
+| GET   | `/api/auth/me`       | Получить текущего авторизованного пользователя                  |
+
+### Тесты
+
+| Метод  | Эндпоинт                     | Описание                            |
+|--------|------------------------------|-------------------------------------|
+| GET    | `/api/health`                | Проверка работоспособности          |
+| GET    | `/api/tests/summary`         | Сводная статистика для дашборда     |
+| GET    | `/api/tests/`                | Список тестов пользователя          |
+| POST   | `/api/tests/`                | Создать новый тест                  |
+| GET    | `/api/tests/{id}`            | Получить детали теста               |
+| PUT    | `/api/tests/{id}`            | Обновить тест                       |
+| DELETE | `/api/tests/{id}`            | Удалить тест                        |
+| POST   | `/api/tests/{id}/run`        | Запустить стресс-тест               |
+| POST   | `/api/tests/{id}/cancel`     | Отменить выполняющийся тест         |
+| GET    | `/api/tests/{id}/results`    | Получить результаты по запросам     |
+| GET    | `/api/tests/{id}/timeline`   | Получить данные таймлайна           |
+| GET    | `/api/tests/{id}/progress`   | Живой прогресс выполняющегося теста |
+
+## Модель авторизации
+
+- При **регистрации/входе** бэкенд возвращает короткоживущий **access-токен** в
+  теле ответа (фронтенд хранит его только в памяти, не в `localStorage`) и
+  устанавливает долгоживущий **refresh-токен** в `HttpOnly SameSite`-куке,
+  ограниченной путём `/api/auth`.
+- Axios-клиент передаёт access-токен как Bearer-заголовок. При ошибке `401`
+  прозрачно вызывает `/api/auth/refresh`, обновляет токен и повторяет запрос.
+- Refresh-токены **ротируются** при каждом обновлении — украденный старый токен
+  перестаёт работать сразу после легитимного рефреша.
+- Пароли хэшируются через **bcrypt** (passlib); JWT подписываются через
+  **python-jose**.
+
+## Схема базы данных
+
+### `users`
+Аккаунты: `username`, `email`, bcrypt `hashed_password`, `is_active`,
+`created_at`. Связан отношением один-ко-многим с `stress_tests`.
 
 ### `stress_tests`
-Stores test configuration and aggregated results (avg/min/max/median/p95/p99 response times, RPS, error rate, status code distribution).
+Конфигурация теста и агрегированные результаты (avg/min/max/median/p95/p99
+времён ответа, RPS, error rate, распределение кодов статусов). Содержит
+внешний ключ `user_id` на таблицу `users`.
 
 ### `test_results`
-Stores individual request-level data (status code, response time, size, errors) linked to a parent stress test.
+Данные по каждому запросу (код статуса, время ответа, размер, ошибки).
+Связан с родительским тестом через `stress_test_id`.
 
-## Project Structure
+## Структура проекта
 
 ```
 api-stress-tester/
+├── docker-compose.yml             # postgres · redis · backend · frontend
 ├── backend/
+│   ├── Dockerfile                 # многоэтапная сборка, non-root, несколько воркеров uvicorn
+│   ├── .dockerignore
 │   ├── app/
-│   │   ├── main.py                # FastAPI application entry point
-│   │   ├── config.py              # Pydantic settings (env variables)
-│   │   ├── database.py            # Async SQLAlchemy engine & session
+│   │   ├── main.py                # FastAPI-приложение, lifespan (init DB + Redis), CORS
+│   │   ├── config.py              # Pydantic-настройки (DB, Redis, JWT, куки)
+│   │   ├── database.py            # Async SQLAlchemy engine, сессия, Base, init_db
+│   │   ├── deps.py                # get_current_user (Bearer-зависимость)
+│   │   ├── redis_client.py        # Подключение Redis + хелперы отмены/прогресса
 │   │   ├── models/
-│   │   │   ├── __init__.py        # Re-exports all models
-│   │   │   └── stress_test.py     # StressTest & TestResult ORM models
+│   │   │   ├── __init__.py        # Реэкспорт User, StressTest, TestResult, перечислений
+│   │   │   ├── user.py            # ORM-модель пользователя
+│   │   │   └── stress_test.py     # ORM-модели StressTest и TestResult
 │   │   ├── schemas/
-│   │   │   ├── __init__.py        # Re-exports all schemas
-│   │   │   └── stress_test.py     # Pydantic request/response schemas
+│   │   │   ├── __init__.py        # Реэкспорт всех схем
+│   │   │   ├── auth.py            # UserCreate/Login/Response, Token
+│   │   │   └── stress_test.py     # Pydantic-схемы запросов и ответов
 │   │   ├── routes/
-│   │   │   ├── __init__.py        # Re-exports router
-│   │   │   └── stress_test.py     # CRUD + run/cancel/results endpoints
+│   │   │   ├── __init__.py        # Объединяет роутеры auth и tests
+│   │   │   ├── auth.py            # register/login/refresh/logout/me
+│   │   │   └── stress_test.py     # CRUD + run/cancel/results/timeline/progress
 │   │   └── services/
-│   │       ├── __init__.py        # Re-exports engine functions
-│   │       └── engine.py          # Core async stress test engine
+│   │       ├── __init__.py        # Реэкспорт функций движка
+│   │       ├── auth.py            # Хэширование паролей + создание/декодирование JWT
+│   │       └── engine.py          # Ядро асинхронного нагрузочного движка
 │   ├── migrations/
-│   │   ├── env.py                 # Alembic environment config
-│   │   ├── script.py.mako         # Migration template
-│   │   └── versions/              # Auto-generated migration files
+│   │   ├── env.py                 # Конфигурация окружения Alembic
+│   │   ├── script.py.mako         # Шаблон миграций
+│   │   └── versions/              # Автогенерированные файлы миграций
 │   ├── alembic.ini
 │   ├── requirements.txt
 │   └── .env.example
 ├── frontend/
+│   ├── Dockerfile                 # Сборка через Vite, раздача через nginx
+│   ├── nginx.conf                 # SPA fallback + прокси /api + gzip
+│   ├── .dockerignore
 │   ├── src/
-│   │   ├── main.jsx               # React entry point + routing
-│   │   ├── index.css              # Tailwind directives + global styles
+│   │   ├── main.jsx               # Точка входа React, роутинг, защищённые маршруты
+│   │   ├── index.css              # Tailwind-директивы + глобальные стили
+│   │   ├── context/
+│   │   │   └── AuthContext.jsx    # Состояние авторизации + тихое восстановление сессии
 │   │   ├── components/
 │   │   │   ├── Shared.jsx         # Layout, StatusBadge, StatCard, Spinner
-│   │   │   ├── TestForm.jsx       # Create/edit test configuration form
-│   │   │   └── Charts.jsx         # Recharts visualizations (4 chart types)
+│   │   │   ├── TestForm.jsx       # Форма создания/редактирования теста
+│   │   │   └── Charts.jsx         # Recharts-визуализации (4 типа графиков)
 │   │   ├── pages/
-│   │   │   ├── Dashboard.jsx      # Summary stats + recent tests
-│   │   │   ├── TestList.jsx       # Filterable test list with CRUD
-│   │   │   ├── CreateTest.jsx     # New test creation page
-│   │   │   └── TestDetail.jsx     # Test results, metrics & charts
+│   │   │   ├── Login.jsx          # Страница входа
+│   │   │   ├── Register.jsx       # Страница регистрации
+│   │   │   ├── Dashboard.jsx      # Сводная статистика + последние тесты
+│   │   │   ├── TestList.jsx       # Список тестов с фильтрацией и CRUD
+│   │   │   ├── CreateTest.jsx     # Создание нового теста
+│   │   │   ├── TestDetail.jsx     # Результаты теста, метрики и графики
+│   │   │   └── Help.jsx           # Встроенное руководство пользователя
 │   │   ├── hooks/
-│   │   │   └── usePolling.js      # Auto-refresh polling hook
+│   │   │   └── usePolling.js      # Хук автоматического поллинга
 │   │   └── utils/
-│   │       ├── api.js             # Axios HTTP client
-│   │       └── helpers.js         # Formatters & utility functions
+│   │       ├── api.js             # Axios-клиент + перехватчики авторизации/рефреша
+│   │       └── helpers.js         # Форматтеры и утилиты
 │   ├── index.html
 │   ├── package.json
 │   ├── vite.config.js
@@ -197,18 +326,33 @@ api-stress-tester/
 └── README.md
 ```
 
-## How the Stress Engine Works
+## Как работает нагрузочный движок
 
-1. User configures a test (URL, method, concurrency, request count, etc.)
-2. On "Run", the backend creates N virtual users as async coroutines
-3. Each virtual user sends sequential HTTP requests via `aiohttp`
-4. Ramp-up gradually introduces users over the configured period
-5. Think time adds configurable delays between requests per user
-6. Each request's metrics (status, latency, size) are collected in memory
-7. After completion, NumPy computes statistical aggregates
-8. Results are bulk-inserted into PostgreSQL
-9. The frontend polls for updates and renders charts in real time
+1. Пользователь настраивает тест (URL, метод, конкурентность, количество
+   запросов и т.д.)
+2. При нажатии «Запустить» роут сбрасывает статистику, удаляет старые результаты
+   и ставит движок в очередь как **фоновую задачу FastAPI**.
+3. Движок создаёт N виртуальных пользователей в виде async-корутин.
+4. Каждый виртуальный пользователь последовательно отправляет HTTP-запросы
+   через `aiohttp`; плейсхолдеры в URL и теле подставляются перед каждым
+   запросом.
+5. Ramp-up постепенно вводит пользователей в работу в течение заданного
+   периода.
+6. Think time добавляет паузы между запросами для каждого пользователя.
+7. Метрики каждого запроса (статус, задержка, размер) накапливаются в памяти
+   и периодически сбрасываются в PostgreSQL.
+8. Redis хранит живой прогресс (completed / total / errors) и флаг отмены.
+   Фронтенд поллит эти данные каждые ~2 с — так графики и счётчики обновляются
+   в реальном времени прямо во время прогона. Отмена теста также проходит
+   через Redis: движок проверяет флаг между запросами и завершает работу
+   корректно.
+9. По завершении NumPy вычисляет агрегированную статистику.
+10. Фронтенд отображает итоговые графики и метрики.
 
-## License
+> **Про celery:** `celery[redis]` присутствует в `requirements.txt` как
+> зависимость, но выполнение тестов сейчас происходит внутри процесса через
+> BackgroundTasks FastAPI, а не через Celery-воркер.
 
-This project was developed as part of a bachelor's thesis.
+## Лицензия
+
+Проект разработан в рамках дипломной работы бакалавра.

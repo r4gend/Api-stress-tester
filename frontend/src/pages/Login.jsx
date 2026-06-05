@@ -33,7 +33,7 @@ export default function Login() {
           <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/30 flex items-center justify-center">
             <Zap className="w-6 h-6 text-accent" />
           </div>
-          <h1 className="font-display font-bold text-2xl text-surface-100">API Stresser</h1>
+          <h1 className="font-display font-bold text-2xl text-surface-100">API Stress Tester</h1>
         </div>
 
         <div className="card p-8">
